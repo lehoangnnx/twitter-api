@@ -196,8 +196,11 @@ class AuthTwitterController extends Controller
     {
 //        $mediaUpload = '';
 //        $base64 = base64_encode($request->file('file'));
+//        dd($request->hasFile('file'));
+//        var_dump($request->hasFile('file'));
         if ($request->hasFile('file')) {
             $mediaUpload = $this->mediaUpload($request->file('file'));
+//            var_dump($mediaUpload);
         }
 //        dd(123);
 //        dd($mediaUpload);
@@ -223,6 +226,16 @@ class AuthTwitterController extends Controller
         ]);
 
         try {
+            $processing_info = 'pendding';
+            do {
+                $mediaUploadStatus = $this->mediaUploadStatus($mediaUpload['data']['media_id_string']);
+//                dd($mediaUploadStatus);
+                $processing_info = $mediaUploadStatus['data']['processing_info']->state;
+                if ($processing_info != 'succeeded') {
+                    sleep(2);
+                }
+            } while ($processing_info != 'succeeded');
+
             $query = array();
             if (!empty($content)) {
                 $query['status'] = $content;
@@ -230,13 +243,14 @@ class AuthTwitterController extends Controller
             if (isset($mediaUpload) && $mediaUpload['status']) {
                 $query['media_ids'] = $mediaUpload['data']['media_id_string'];
             }
+
             $response = $client->post('statuses/update.json',
                 [
                     'query' => $query,
                 ]
             );
         } catch (\Exception $exception) {
-            return ['status' => false, 'message' => $exception->getMessage()];
+            return ['status' => false, 'message CREATE TWEET' => $exception->getMessage()];
         }
 
         return redirect('home');
@@ -386,20 +400,31 @@ class AuthTwitterController extends Controller
     {
         try {
             $mediaUploadInit = $this->mediaUploadInit($file);
+
             $mediaUploadAppend = $this->mediaUploadAppend($mediaUploadInit['data']['media_id_string'], $file);
+
+//            $mediaUploadStatus = $this->mediaUploadStatus($mediaUploadInit['data']['media_id_string']);
+//            dd($mediaUploadStatus);
+
             if ($mediaUploadAppend['status']) {
                 $mediaUploadFinalize = $this->mediaUploadFinalize($mediaUploadInit['data']['media_id_string']);
             }
 
             return ['status' => true, 'data' => $mediaUploadFinalize['data']];
         } catch (\Exception $exception) {
-            return ['status' => false, 'message' => $exception->getMessage()];
+            return ['status' => false, 'message MEDIA UPLOAD' => $exception->getMessage()];
         }
     }
 
     public function mediaUploadInit($file)
     {
-        dd($file);
+//        dd($file);
+        $typeImage = array('png', 'jpeg', 'jpg');
+        $typeGif = array('gif');
+        $typeVideo = array('mp4');
+//        $mime = mime_content_type($file->getRealPath());
+        $typeFile = $file->getClientOriginalExtension();
+//        dd($file->getClientOriginalExtension());
         $user = User::find(Auth::user()->id);
         if (is_null($user['oauth_token']) || is_null($user['oauth_token_secret'])) {
             return redirect('home');
@@ -420,19 +445,28 @@ class AuthTwitterController extends Controller
             'auth' => 'oauth',
         ]);
         try {
+            $query = array(
+                'command' => 'INIT',
+                'total_bytes' => $file->getSize(),
+                'media_type' => $file->getMimeType(),
+            );
+            if (in_array($typeFile, $typeVideo)) {
+                $query['media_category'] = 'tweet_video';
+            } elseif (in_array($typeFile, $typeImage)) {
+                $query['media_category'] = 'tweet_image';
+            } elseif (in_array($typeFile, $typeGif)) {
+                $query['media_category'] = 'tweet_gif';
+            }
+//            dd($query);
             $response = $client->post('media/upload.json',
                 [
-                    'query' => [
-                        'command' => 'INIT',
-                        'total_bytes' => $file->getSize(),
-                        'media_type	' => $file->getMimeType(),
-                    ],
+                    'query' => $query,
                 ]
             );
 
             return ['status' => true, 'data' => (array)json_decode($response->getBody()->getContents())];
         } catch (\Exception $exception) {
-            return ['status' => false, 'message' => $exception->getMessage()];
+            return ['status' => false, 'message INIT' => $exception->getMessage()];
         }
     }
 
@@ -487,11 +521,12 @@ class AuthTwitterController extends Controller
                     ]
                 );
                 $segment_id++;
+                sleep(10);
             }
 
             return ['status' => true, 'data' => json_decode($response->getStatusCode())];
         } catch (\Exception $exception) {
-            return ['status' => false, 'message' => $exception->getMessage()];
+            return ['status' => false, 'message APPEND' => $exception->getMessage()];
         }
     }
 
@@ -521,6 +556,43 @@ class AuthTwitterController extends Controller
                 [
                     'query' => [
                         'command' => 'FINALIZE',
+                        'media_id' => $media_id,
+                    ],
+                ]
+            );
+
+            return ['status' => true, 'data' => (array)json_decode($response->getBody()->getContents())];
+        } catch (\Exception $exception) {
+            return ['status' => false, 'message FINALIZE' => $exception->getMessage()];
+        }
+    }
+
+    public function mediaUploadStatus($media_id)
+    {
+        $user = User::find(Auth::user()->id);
+        if (is_null($user['oauth_token']) || is_null($user['oauth_token_secret'])) {
+            return redirect('home');
+        }
+        $stack = HandlerStack::create();
+        $middleware = new Oauth1([
+            'consumer_key' => $this->_twitter_consumer_api_key,
+            'consumer_secret' => $this->_twitter_consumer_api_api_secret_key,
+            'token' => $user['oauth_token'],
+            'token_secret' => $user['oauth_token_secret'],
+        ]);
+
+        $stack->push($middleware);
+
+        $client = new Client([
+            'base_uri' => 'https://upload.twitter.com/1.1/',
+            'handler' => $stack,
+            'auth' => 'oauth',
+        ]);
+        try {
+            $response = $client->get('media/upload.json',
+                [
+                    'query' => [
+                        'command' => 'STATUS',
                         'media_id' => $media_id,
                     ],
                 ]
