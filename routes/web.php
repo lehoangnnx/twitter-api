@@ -27,7 +27,7 @@ Route::get('/home', 'AuthTwitterController@requestToken')->name('home');
 
 Route::post('/tweet/create', 'AuthTwitterController@createTweet')->name('createTweet');
 Route::get('/tweet/delete', 'AuthTwitterController@deleteTweet')->name('deleteTweet');
-Route::get('/tweet/show', 'AuthTwitterController@showTweet')->name('showTweet');
+Route::get('/tweet/show/{id}', 'AuthTwitterController@showTweet')->name('showTweet');
 Route::get('/tweet/retweet', 'AuthTwitterController@retweetTweet')->name('retweetTweet');
 Route::get('/tweet/favorites', 'AuthTwitterController@favoritesTweet')->name('favoritesTweet');
 Route::post('/tweet/reply', 'AuthTwitterController@replyTweet')->name('replyTweet');

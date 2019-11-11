@@ -81,6 +81,8 @@
                                             <input type="text" class="form-control" name="content" placeholder="Content Reply">
                                             <button type="submit" class="btn btn-primary m-2">Reply</button>
                                         </form>
+                                        <a href="{{ route('showTweet', $item->id_str )  }}"
+                                           class="btn btn-danger m-2">Detail</a>
                                         <a href="{{ route('deleteTweet', [ 'id' => $item->id_str ])  }}"
                                            class="btn btn-danger m-2">Delete</a>
                                     </div>
