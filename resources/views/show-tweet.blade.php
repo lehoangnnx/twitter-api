@@ -25,8 +25,8 @@
             </div>
 
             <div class="row justify-content-center">
-                @isset($user_time_line)
-                    @foreach($user_time_line as $item)
+                @isset($resultReply)
+                    @foreach($resultReply as $item)
                         <div class="col-6">
                             <div class="card mt-3 tab-card">
                                 <div class="card-header tab-card-header">

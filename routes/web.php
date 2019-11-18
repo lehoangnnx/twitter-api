@@ -31,7 +31,9 @@ Route::get('/tweet/show/{id}', 'AuthTwitterController@showTweet')->name('showTwe
 Route::get('/tweet/retweet', 'AuthTwitterController@retweetTweet')->name('retweetTweet');
 Route::get('/tweet/favorites', 'AuthTwitterController@favoritesTweet')->name('favoritesTweet');
 Route::post('/tweet/reply', 'AuthTwitterController@replyTweet')->name('replyTweet');
-
+Route::get('/mess', 'AuthTwitterController@directMessage')->name('mess');
+Route::get('/mess/{user_mess_id}/{user_id}', 'AuthTwitterController@detailDirectMessage')->name('detailDirectMessage');
+Route::post('/create/mess', 'AuthTwitterController@createMessage')->name('createMessage');
 Auth::routes();
 
 URL::forceScheme('https');

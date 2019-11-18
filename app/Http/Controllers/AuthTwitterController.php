@@ -34,8 +34,7 @@ class AuthTwitterController extends Controller
     public function requestToken()
     {
         $user = User::find(Auth::user()->id);
-        if (!is_null($user['oauth_token'])) {
-//            $home_time_line = $this->homeTimeLine();
+        if (!empty($user['oauth_token'])) {
             $user_time_line = $this->userTimeLine();
 
             return view('home')->with('check_oauth_token', true)
@@ -184,7 +183,13 @@ class AuthTwitterController extends Controller
         ]);
 
         try {
-            $response = $client->get('statuses/user_timeline.json');
+            $response = $client->get('statuses/user_timeline.json',
+            [
+                'query' => [
+                    'count' => 200,
+                    'user_id' => $user['twitter_id_str']
+                ]
+            ]);
 
             return ['status' => true, 'data' => json_decode($response->getBody()->getContents())];
         } catch (\Exception $exception) {
@@ -227,14 +232,19 @@ class AuthTwitterController extends Controller
 
         try {
             $processing_info = 'pendding';
-            do {
-                $mediaUploadStatus = $this->mediaUploadStatus($mediaUpload['data']['media_id_string']);
-//                dd($mediaUploadStatus);
-                $processing_info = $mediaUploadStatus['data']['processing_info']->state;
-                if ($processing_info != 'succeeded') {
-                    sleep(2);
-                }
-            } while ($processing_info != 'succeeded');
+            if (isset($mediaUpload) && $mediaUpload['status']) {
+                do {
+                    $mediaUploadStatus = $this->mediaUploadStatus($mediaUpload['data']['media_id_string']);
+
+                    if ($mediaUploadStatus['status']) {
+                        $processing_info = $mediaUploadStatus['data']['processing_info']->state;
+                    }
+                    if ($processing_info != 'succeeded') {
+                        sleep(5);
+                    }
+                    dd($mediaUploadStatus);
+                } while ($processing_info != 'succeeded');
+            }
 
             $query = array();
             if (!empty($content)) {
@@ -317,13 +327,13 @@ class AuthTwitterController extends Controller
 
             $resultReply = $this->getReplyOfTweet($resultTweet);
 
-            dd($resultReply);
 //            return ['status' => true, 'data' => json_decode($response->getBody()->getContents())];
         } catch (\Exception $exception) {
             return ['status' => false, 'message' => $exception->getMessage()];
         }
 
-        return view('show-tweet')->with('tweet', $resultTweet);
+        return view('show-tweet')->with('tweet', $resultTweet)
+            ->with('resultReply', $resultReply);
     }
 
     public function retweetTweet(Request $request)
@@ -629,15 +639,16 @@ class AuthTwitterController extends Controller
 
 //            $resultSearch = $this->search($query);
 //            dd($resultSearch);
-            foreach ((array) $result['data']->statuses as $item) {
+            foreach ((array)$result['data']->statuses as $item) {
                 array_push($resultSearch, $item);
 //                dd($item);
-               $resultReplyOfReply = $this->getReplyOfTweet($item);
-               foreach ($resultReplyOfReply as $resultReplyOfReplyItem) {
-                   array_push($resultSearch, $resultReplyOfReplyItem);
-               }
+                $resultReplyOfReply = $this->getReplyOfTweet($item);
+                foreach ($resultReplyOfReply as $resultReplyOfReplyItem) {
+                    array_push($resultSearch, $resultReplyOfReplyItem);
+                }
 //                array_merge($resultSearch, $this->getReplyOfTweet($item));
             }
+
 //            dd($resultSearch);
             return $resultSearch;
         } while (count($resultSearch) !== 100);
@@ -671,6 +682,222 @@ class AuthTwitterController extends Controller
             ]);
 
             return ['status' => true, 'data' => json_decode($response->getBody()->getContents())];
+        } catch (\Exception $exception) {
+            return ['status' => false, 'message' => $exception->getMessage()];
+        }
+    }
+
+    public function directMessage()
+    {
+        $user = User::find(Auth::user()->id);
+        $user_message = array();
+        $detail_user_message = array();
+        $allDirectMessage = $this->getAllDirectMessages();
+        if ($allDirectMessage['status']) {
+            foreach ($allDirectMessage['data'] as $item) {
+                if ($item->message_create->sender_id !== $user['twitter_id_str']
+                    && !in_array($item->message_create->sender_id, $user_message)) {
+                    array_push($user_message, $item->message_create->sender_id);
+                } elseif ($item->message_create->target->recipient_id !== $user['twitter_id_str']
+                          && !in_array($item->message_create->target->recipient_id, $user_message)) {
+                    array_push($user_message, $item->message_create->target->recipient_id);
+                }
+            }
+        }
+
+        foreach ($user_message as $item) {
+            $detail_user = $this->showUser($item);
+            array_push($detail_user_message, $detail_user['data']);
+        }
+
+//        dd($detail_user_message);
+        return view('mess')->with('detail_user_message', $detail_user_message)
+            ->with('user', $user['twitter_id_str']);
+//        return ['user-message' => $user['twitter_id_str'], 'user' => $user['twitter_id_str'] ];
+    }
+
+    public function detailDirectMessage($user_mess_id, $user_id)
+    {
+        $mess = array();
+        $allDirectMessage = $this->getAllDirectMessages();
+        if ($allDirectMessage['status']) {
+            foreach ($allDirectMessage['data'] as $item) {
+                if (($item->message_create->sender_id === $user_mess_id
+                     && $item->message_create->target->recipient_id === $user_id) ||
+                    ($item->message_create->sender_id === $user_id
+                     && $item->message_create->target->recipient_id === $user_mess_id)) {
+                    array_push($mess, $item);
+                }
+            }
+        }
+        $detail_user = $this->showUser($user_id);
+        $detail_user_recipient = $this->showUser($user_mess_id);
+        usort($mess, function ($a, $b) {
+            return $a->created_timestamp <=> $b->created_timestamp;
+        });
+
+        return view('detail-mess')->with('detailMess', $mess)
+            ->with('detail_user', $detail_user['data'])
+            ->with('detail_user_recipient', $detail_user_recipient['data']);
+    }
+
+    public function createMessage(Request $request)
+    {
+        $query = array(
+            'event' => [
+                'type' => 'message_create',
+                'message_create' => [
+                    'target' => [
+                        'recipient_id' => $request->input('user_recipient')
+                    ],
+                'message_data' => [
+                    'text' => $request->input('content')
+                ]
+              ]
+            ]
+        );
+
+        $result = $this->directMessagesNew($query);
+        return redirect()->back();
+    }
+
+    public function getAllDirectMessages()
+    {
+        $user = User::find(Auth::user()->id);
+        if (is_null($user['oauth_token']) || is_null($user['oauth_token_secret'])) {
+            return redirect('home');
+        }
+        $stack = HandlerStack::create();
+        $middleware = new Oauth1([
+            'consumer_key' => $this->_twitter_consumer_api_key,
+            'consumer_secret' => $this->_twitter_consumer_api_api_secret_key,
+            'token' => $user['oauth_token'],
+            'token_secret' => $user['oauth_token_secret'],
+        ]);
+
+        $stack->push($middleware);
+
+        $client = new Client([
+            'base_uri' => 'https://api.twitter.com/1.1/',
+            'handler' => $stack,
+            'auth' => 'oauth',
+        ]);
+
+        try {
+            $next_cursor = '';
+            $resultMessage = array();
+            $requestLimit = array();
+            while (true) {
+                $query = array(
+                    'count' => 50,
+                );
+                if (!empty($next_cursor)) {
+                    $query['cursor'] = $next_cursor;
+                }
+                $response = $client->get("direct_messages/events/list.json", [
+                    'query' => $query,
+                ]);
+                $requestLimit = array(
+                    'x-rate-limit-limit' => $response->getHeaders()['x-rate-limit-limit'][0],
+                    'x-rate-limit-remaining' => $response->getHeaders()['x-rate-limit-remaining'][0],
+                    'x-rate-limit-reset' => $response->getHeaders()['x-rate-limit-reset'][0],
+                    'x-response-time' => $response->getHeaders()['x-response-time'][0],
+                );
+                $body = (array)json_decode($response->getBody()->getContents());
+//                dd($body['events']);
+//                array_push($resultMessage, $body['events']);
+                $resultMessage = array_merge($resultMessage, $body['events']);
+
+                if (!isset($body['next_cursor'])) {
+                    break;
+                }
+                $next_cursor = $body['next_cursor'];
+            }
+
+//            dd($resultMessage);
+            return ['status' => true, 'rate-limit' => $requestLimit, 'data' => $resultMessage];
+        } catch (\Exception $exception) {
+            return ['status' => false, 'rate-limit' => $requestLimit, 'message' => $exception->getMessage()];
+        }
+    }
+
+    public function showUser($user_id)
+    {
+        $user = User::find(Auth::user()->id);
+        if (is_null($user['oauth_token']) || is_null($user['oauth_token_secret'])) {
+            return redirect('home');
+        }
+        $stack = HandlerStack::create();
+        $middleware = new Oauth1([
+            'consumer_key' => $this->_twitter_consumer_api_key,
+            'consumer_secret' => $this->_twitter_consumer_api_api_secret_key,
+            'token' => $user['oauth_token'],
+            'token_secret' => $user['oauth_token_secret'],
+        ]);
+
+        $stack->push($middleware);
+
+        $client = new Client([
+            'base_uri' => 'https://api.twitter.com/1.1/',
+            'handler' => $stack,
+            'auth' => 'oauth',
+        ]);
+        $requestLimit = array();
+        try {
+            $response = $client->get("users/show.json", [
+                'query' => [
+                    'user_id' => $user_id,
+                ],
+            ]);
+            $requestLimit = array(
+                'x-rate-limit-limit' => $response->getHeaders()['x-rate-limit-limit'][0],
+                'x-rate-limit-remaining' => $response->getHeaders()['x-rate-limit-remaining'][0],
+                'x-rate-limit-reset' => $response->getHeaders()['x-rate-limit-reset'][0],
+                'x-response-time' => $response->getHeaders()['x-response-time'][0],
+            );
+
+            return [
+                'status' => true,
+                'rate-limit' => $requestLimit,
+                'data' => json_decode($response->getBody()->getContents()),
+            ];
+        } catch (\Exception $exception) {
+            return ['status' => false, 'rate-limit' => $requestLimit, 'message' => $exception->getMessage()];
+        }
+    }
+
+    public function directMessagesNew($query)
+    {
+        $user = User::find(Auth::user()->id);
+        if (is_null($user['oauth_token']) || is_null($user['oauth_token_secret'])) {
+            return redirect('home');
+        }
+        $stack = HandlerStack::create();
+        $middleware = new Oauth1([
+            'consumer_key' => $this->_twitter_consumer_api_key,
+            'consumer_secret' => $this->_twitter_consumer_api_api_secret_key,
+            'token' => $user['oauth_token'],
+            'token_secret' => $user['oauth_token_secret'],
+        ]);
+
+        $stack->push($middleware);
+
+        $client = new Client([
+            'base_uri' => 'https://api.twitter.com/1.1/',
+            'handler' => $stack,
+            'auth' => 'oauth',
+        ]);
+        try {
+            $response = $client->post("direct_messages/events/new.json", [
+                'headers' => [
+                    'Accept'     => 'application/json',
+                ],
+                'json' => $query,
+            ]);
+            return [
+                'status' => true,
+                'data' => json_decode($response->getBody()->getContents()),
+            ];
         } catch (\Exception $exception) {
             return ['status' => false, 'message' => $exception->getMessage()];
         }
